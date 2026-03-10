@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 160">
+
+  <!-- Drop shadow -->
+  <ellipse cx="50" cy="150" rx="33.2" ry="4" fill="rgba(0,0,0,0.10)"/>
+
+  <!-- Body -->
+  <path d="M 50 64.4 C 74.2 63.4, 92.2 77.2, 91.6 94.4 C 91 112.8, 73 125.6, 50 125.6 C 27 125.6, 8.4 112.8, 7.8 94.4 C 7.2 76.6, 25.8 64.6, 50 64.4 Z"
+        fill="none" stroke="white" stroke-width="2.5" stroke-linejoin="round"/>
+
+  <!-- Eyebrows -->
+  <path d="M 26.6 75 Q 35.6 73.4 44 77.2"
+        fill="none" stroke="white" stroke-width="2" stroke-linecap="round"/>
+  <path d="M 56 77.2 Q 64.4 73.4 73.4 75"
+        fill="none" stroke="white" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- Eyes -->
+  <ellipse cx="35.8" cy="90.2" rx="5.5" ry="2.6" fill="white"/>
+  <ellipse cx="64.2" cy="90.2" rx="5.5" ry="2.6" fill="white"/>
+
+  <!-- Mouth -->
+  <path d="M 35.2 103.2 Q 50 109.8 64.8 103.2"
+        fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round"/>
+
+</svg>

@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 160">
+
+  <!-- Drop shadow -->
+  <ellipse cx="50" cy="150" rx="30" ry="4" fill="rgba(0,0,0,0.10)"/>
+  <line x1="22" y1="77" x2="28" y2="80" stroke="white" stroke-width="1.5" stroke-linecap="round" opacity="0.3"/>
+  <line x1="20" y1="87" x2="26" y2="86" stroke="white" stroke-width="1.5" stroke-linecap="round" opacity="0.3"/>
+  <line x1="72" y1="80" x2="78" y2="77" stroke="white" stroke-width="1.5" stroke-linecap="round" opacity="0.3"/>
+  <line x1="74" y1="86" x2="80" y2="87" stroke="white" stroke-width="1.5" stroke-linecap="round" opacity="0.3"/>
+
+  <!-- Body -->
+  <path d="M 50 17.2 C 56.6 17, 90.2 54, 90 84 C 89.8 111.2, 73 124, 50 124 C 27 124, 10 111.2, 9.8 84 C 9.6 53.8, 43.4 17.4, 50 17.2 Z"
+        fill="none" stroke="white" stroke-width="2.5" stroke-linejoin="round"/>
+
+  <!-- Eyebrows -->
+  <path d="M 29.4 75.4 Q 36.8 69.6 44 69.6"
+        fill="none" stroke="white" stroke-width="2" stroke-linecap="round"/>
+  <path d="M 56 69.6 Q 63.2 69.6 70.6 75.4"
+        fill="none" stroke="white" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- Eyes -->
+  <ellipse cx="36" cy="79" rx="3.5" ry="3.5" fill="white"/>
+  <ellipse cx="64" cy="79" rx="3.5" ry="3.5" fill="white"/>
+
+  <!-- Mouth -->
+  <path d="M 37.2 96 Q 50 91 62 96"
+        fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round"/>
+
+</svg>

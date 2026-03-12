@@ -68,7 +68,7 @@ const SHARP: Keyframe = {
 };
 
 // Sign geometry (fixed)
-export const SIGN_X = 4, SIGN_Y = 4, SIGN_W = 92, SIGN_H = 56, SIGN_R = 8;
+export const SIGN_X = 4, SIGN_Y = 14, SIGN_W = 92, SIGN_H = 56, SIGN_R = 8;
 export const SIGN_BOTTOM = SIGN_Y + SIGN_H; // 60
 export const SIGN_LEFT = SIGN_X;            // 4
 export const SIGN_RIGHT = SIGN_X + SIGN_W;  // 96
@@ -120,6 +120,36 @@ function armPaths(lHand: [number, number], rHand: [number, number]) {
   };
 }
 
+// Wavy arm paths: sinusoidal polyline with propagating phase (wave travels body → sign).
+function armWavePaths(lHand: [number, number], rHand: [number, number], phase: number) {
+  const N = 14;        // segments — more = smoother sine shape
+  const amplitude = 5; // lateral deflection in viewBox units
+  const periods = 1.5; // sine periods along arm length
+
+  function wavePath(start: [number, number], end: [number, number]): string {
+    const dx = end[0] - start[0];
+    const dy = end[1] - start[1];
+    const len = Math.sqrt(dx * dx + dy * dy);
+    // Perpendicular unit vector (rotated 90° CCW)
+    const px = -dy / len;
+    const py =  dx / len;
+    const pts = [`M ${r(start[0])} ${r(start[1])}`];
+    for (let i = 1; i <= N; i++) {
+      const t = i / N;
+      // Taper amplitude to 0 at both endpoints so arms always land exactly on the sign
+      const taper = Math.sin(t * Math.PI);
+      const wave = amplitude * taper * Math.sin(phase + t * periods * 2 * Math.PI);
+      pts.push(`L ${r(start[0] + dx * t + px * wave)} ${r(start[1] + dy * t + py * wave)}`);
+    }
+    return pts.join(' ');
+  }
+
+  return {
+    lArm: wavePath(lHand, [SIGN_LEFT,  SIGN_BOTTOM]),
+    rArm: wavePath(rHand, [SIGN_RIGHT, SIGN_BOTTOM]),
+  };
+}
+
 // ─── Computed params (for web direct DOM updates) ─────────────────────────────
 
 export type TunerParams = {
@@ -132,6 +162,8 @@ export type TunerParams = {
   mouthD: string;
   lArmD: string;
   rArmD: string;
+  lHand: [number, number];
+  rHand: [number, number];
   signRotation: number; // degrees — negative = tilt left (flat), positive = tilt right (sharp)
   compOp: number;
   tensOp: number;
@@ -161,6 +193,8 @@ export function computeParams(cents: number): TunerParams {
     mouthD: `M ${mx1} ${my1} Q ${mcx} ${mcy} ${mx2} ${my2}`,
     lArmD: lArm,
     rArmD: rArm,
+    lHand: params.lHand,
+    rHand: params.rHand,
     signRotation: r((clamped / 50) * MAX_TILT_DEG),
     compOp: clamped <= -30 ? r(((Math.abs(clamped) - 30) / 20) * 0.5) : 0,
     tensOp: clamped >= 30  ? r(((clamped - 30) / 20) * 0.5) : 0,
@@ -170,11 +204,16 @@ export function computeParams(cents: number): TunerParams {
 
 // ─── Full SVG string (native Image fallback) ─────────────────────────────────
 
-export function generateSvg(cents: number, strokeColor: string, note = ''): string {
+// armPhase: when non-zero, arms render as animated sine-wave polylines instead of bezier curves.
+export function generateSvg(cents: number, strokeColor: string, note = '', armPhase = 0): string {
   const p = computeParams(cents);
   const ty = p.topY;
   const c = strokeColor;
   const rot = `rotate(${p.signRotation}, ${SIGN_CX}, ${SIGN_CY})`;
+
+  const { lArm, rArm } = armPhase !== 0
+    ? armWavePaths(p.lHand, p.rHand, armPhase)
+    : { lArm: p.lArmD, rArm: p.rArmD };
 
   let extra = '';
   if (p.compOp > 0) {
@@ -191,14 +230,23 @@ export function generateSvg(cents: number, strokeColor: string, note = ''): stri
   <line x1="74" y1="126" x2="80" y2="127" stroke="${c}" stroke-width="1.5" stroke-linecap="round" opacity="${p.tensOp}"/>`;
   }
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 200">
-  <ellipse cx="50" cy="193" rx="${p.shadowRx}" ry="4" fill="rgba(0,0,0,0.10)"/>
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-5 0 110 173">
+  <ellipse cx="50" cy="167" rx="${p.shadowRx}" ry="3" fill="rgba(0,0,0,0.10)"/>
 
-  <!-- Arms (behind body) -->
-  <path d="${p.lArmD}" fill="none" stroke="${c}" stroke-width="4" stroke-linecap="round"/>
-  <path d="${p.rArmD}" fill="none" stroke="${c}" stroke-width="4" stroke-linecap="round"/>
+  <!-- Arms (behind sign and body) -->
+  <path d="${lArm}" fill="none" stroke="${c}" stroke-width="4" stroke-linecap="round"/>
+  <path d="${rArm}" fill="none" stroke="${c}" stroke-width="4" stroke-linecap="round"/>
 
-  <!-- Body (black fill so arms don't show through) -->
+  <!-- Sign (in front of arms, behind body — head overlaps sign) -->
+  <g transform="${rot}">
+    <rect x="${SIGN_X}" y="${SIGN_Y}" width="${SIGN_W}" height="${SIGN_H}" rx="${SIGN_R}"
+          fill="#000" stroke="${c}" stroke-width="2"/>
+    <text x="${SIGN_CX}" y="${SIGN_CY + 10}" text-anchor="middle"
+          fill="${c}" font-size="28" font-weight="800"
+          font-family="system-ui,sans-serif">${note}</text>
+  </g>
+
+  <!-- Body (black fill so arms don't show through; on top of sign) -->
   <path d="${p.bodyD}" fill="#000" stroke="${c}" stroke-width="2.5" stroke-linejoin="round"/>
 
   <!-- Eyebrows -->
@@ -212,13 +260,5 @@ export function generateSvg(cents: number, strokeColor: string, note = ''): stri
   <!-- Mouth -->
   <path d="${p.mouthD}" fill="none" stroke="${c}" stroke-width="2.2" stroke-linecap="round"/>
 ${extra}
-  <!-- Sign (on top — black fill so body doesn't show through) -->
-  <g transform="${rot}">
-    <rect x="${SIGN_X}" y="${SIGN_Y}" width="${SIGN_W}" height="${SIGN_H}" rx="${SIGN_R}"
-          fill="#000" stroke="${c}" stroke-width="2"/>
-    <text x="${SIGN_CX}" y="${SIGN_CY + 4}" text-anchor="middle" dominant-baseline="middle"
-          fill="${c}" font-size="28" font-weight="800"
-          font-family="system-ui,sans-serif">${note}</text>
-  </g>
 </svg>`;
 }

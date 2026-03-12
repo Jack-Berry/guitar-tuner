@@ -1,0 +1,107 @@
+diff --git a/node_modules/react-native-audio-api/common/cpp/audioapi/core/AudioParam.cpp b/node_modules/react-native-audio-api/common/cpp/audioapi/core/AudioParam.cpp
+index 38da2a5..1076405 100644
+--- a/node_modules/react-native-audio-api/common/cpp/audioapi/core/AudioParam.cpp
++++ b/node_modules/react-native-audio-api/common/cpp/audioapi/core/AudioParam.cpp
+@@ -224,14 +224,14 @@ void AudioParam::setValueCurveAtTime(
+ }
+ 
+ void AudioParam::cancelScheduledValues(double cancelTime) {
+-  auto it = eventsQueue_.rbegin();
+-  while (it->getEndTime() >= cancelTime) {
+-    if (it->getStartTime() >= cancelTime ||
+-        it->getType() == ParamChangeEventType::SET_VALUE_CURVE) {
++  while (!eventsQueue_.empty() &&
++         eventsQueue_.back().getEndTime() >= cancelTime) {
++    if (eventsQueue_.back().getStartTime() >= cancelTime ||
++        eventsQueue_.back().getType() == ParamChangeEventType::SET_VALUE_CURVE) {
+       eventsQueue_.pop_back();
++    } else {
++      break;
+     }
+-
+-    it++;
+   }
+ }
+ 
+diff --git a/node_modules/react-native-audio-api/common/cpp/audioapi/core/sources/AudioScheduledSourceNode.h b/node_modules/react-native-audio-api/common/cpp/audioapi/core/sources/AudioScheduledSourceNode.h
+index ef28cf8..7b426b0 100644
+--- a/node_modules/react-native-audio-api/common/cpp/audioapi/core/sources/AudioScheduledSourceNode.h
++++ b/node_modules/react-native-audio-api/common/cpp/audioapi/core/sources/AudioScheduledSourceNode.h
+@@ -39,9 +39,11 @@ class AudioScheduledSourceNode : public AudioNode {
+ 
+   void handleStopScheduled();
+ 
++ protected:
++  double stopTime_;
++
+  private:
+   double startTime_;
+-  double stopTime_;
+ };
+ 
+ } // namespace audioapi
+diff --git a/node_modules/react-native-audio-api/common/cpp/audioapi/core/sources/OscillatorNode.cpp b/node_modules/react-native-audio-api/common/cpp/audioapi/core/sources/OscillatorNode.cpp
+index b0d412d..390b1bd 100644
+--- a/node_modules/react-native-audio-api/common/cpp/audioapi/core/sources/OscillatorNode.cpp
++++ b/node_modules/react-native-audio-api/common/cpp/audioapi/core/sources/OscillatorNode.cpp
+@@ -49,10 +49,15 @@ void OscillatorNode::processNode(
+ 
+   if (!isPlaying()) {
+     processingBus->zero();
++    samplesSinceStart_ = 0;
+     return;
+   }
+ 
+-  auto deltaTime = 1.0 / context_->getSampleRate();
++  auto sampleRate = context_->getSampleRate();
++  const int FADE_SAMPLES = static_cast<int>(sampleRate * 0.010); // 10 ms
++  const double FADE_DURATION = 0.010; // 10 ms
++
++  auto deltaTime = 1.0 / sampleRate;
+   auto time =
+       context_->getCurrentTime() + static_cast<double>(startOffset) * deltaTime;
+ 
+@@ -66,6 +71,23 @@ void OscillatorNode::processNode(
+     float sample =
+         periodicWave_->getSample(detunedFrequency, phase_, phaseIncrement);
+ 
++    // Fade-in: linear ramp over first 10 ms
++    float envelope = 1.0f;
++    if (samplesSinceStart_ < FADE_SAMPLES) {
++      envelope = static_cast<float>(samplesSinceStart_) / static_cast<float>(FADE_SAMPLES);
++    }
++
++    // Fade-out: linear ramp over last 10 ms before scheduled stop
++    if (stopTime_ > 0.0) {
++      double timeToStop = stopTime_ - time;
++      if (timeToStop >= 0.0 && timeToStop < FADE_DURATION) {
++        float fadeOut = static_cast<float>(timeToStop / FADE_DURATION);
++        envelope = std::min(envelope, fadeOut);
++      }
++    }
++
++    sample *= envelope;
++
+     for (int j = 0; j < processingBus->getNumberOfChannels(); j += 1) {
+       (*processingBus->getChannel(j))[i] = sample;
+     }
+@@ -77,6 +99,7 @@ void OscillatorNode::processNode(
+         static_cast<float>(periodicWave_->getPeriodicWaveSize());
+ 
+     time += deltaTime;
++    samplesSinceStart_++;
+   }
+ 
+   handleStopScheduled();
+diff --git a/node_modules/react-native-audio-api/common/cpp/audioapi/core/sources/OscillatorNode.h b/node_modules/react-native-audio-api/common/cpp/audioapi/core/sources/OscillatorNode.h
+index 3063049..3ab3ba7 100644
+--- a/node_modules/react-native-audio-api/common/cpp/audioapi/core/sources/OscillatorNode.h
++++ b/node_modules/react-native-audio-api/common/cpp/audioapi/core/sources/OscillatorNode.h
+@@ -31,6 +31,7 @@ class OscillatorNode : public AudioScheduledSourceNode {
+   std::shared_ptr<AudioParam> detuneParam_;
+   OscillatorType type_;
+   float phase_ = 0.0;
++  int samplesSinceStart_ = 0;
+   std::shared_ptr<PeriodicWave> periodicWave_;
+ 
+   static OscillatorType fromString(const std::string &type) {

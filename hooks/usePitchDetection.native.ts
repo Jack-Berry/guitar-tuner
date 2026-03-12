@@ -1,13 +1,13 @@
 // Native (iOS/Android) pitch detection using react-native-audio-record.
 // Metro automatically picks this file over usePitchDetection.ts on native.
-import { Audio } from "expo-av";
 import { useCallback, useEffect, useRef, useState } from "react";
 // @ts-ignore — no bundled types for this library
 import AudioRecord from "react-native-audio-record";
 
-const RMS_THRESHOLD = 0.007;
+const RMS_THRESHOLD = 0.004;
 const SAMPLE_RATE = 44100;
-const BUFFER_SIZE = 4096;
+const BUFFER_SIZE = 2048;          // 2048 is still 2× the longest guitar wavelength; 4× cheaper than 4096
+const MIN_PROCESS_MS = 100;        // run autocorrelation at most 10×/sec to keep JS thread free
 const EMIT_INTERVAL_MS = 500;
 const RAW_EMIT_INTERVAL_MS = 80;
 
@@ -106,14 +106,12 @@ export function usePitchDetection() {
   const freqBufferRef   = useRef<number[]>([]);
   const lastEmitRef     = useRef<number>(0);
   const lastRawEmitRef  = useRef<number>(0);
+  const lastProcessRef  = useRef<number>(0);
 
   const start = useCallback(async () => {
-    const { status } = await Audio.requestPermissionsAsync();
-    if (status !== "granted") {
-      setError("Microphone permission denied.");
-      return;
-    }
-
+    // iOS triggers the mic permission dialog automatically on first AudioRecord.start()
+    // because NSMicrophoneUsageDescription is declared in Info.plist.
+    // Android uses the RECORD_AUDIO permission declared in AndroidManifest.xml.
     AudioRecord.init({
       sampleRate: SAMPLE_RATE,
       channels: 1,
@@ -126,6 +124,7 @@ export function usePitchDetection() {
     freqBufferRef.current = [];
     lastEmitRef.current = performance.now();
     lastRawEmitRef.current = performance.now();
+    lastProcessRef.current = 0;
     setIsListening(true);
     setError(null);
 
@@ -136,47 +135,75 @@ export function usePitchDetection() {
       const buf = sampleBufRef.current;
       for (let i = 0; i < chunk.length; i++) buf.push(chunk[i]);
 
-      // Process when we have enough samples
-      while (buf.length >= BUFFER_SIZE) {
-        const window = new Float32Array(buf.splice(0, BUFFER_SIZE));
-        const freq = autoCorrelate(window, SAMPLE_RATE);
-        const now = performance.now();
+      // Drain buffer without processing if it grows too large (prevents unbounded backlog)
+      if (buf.length > BUFFER_SIZE * 4) {
+        sampleBufRef.current = buf.slice(-BUFFER_SIZE);
+        return;
+      }
 
-        if (freq > 60 && freq < 1400) {
-          freqBufferRef.current.push(freq);
-          if (now - lastRawEmitRef.current >= RAW_EMIT_INTERVAL_MS) {
-            lastRawEmitRef.current = now;
-            setRawCents(freqToNoteInfo(freq).cents);
-          }
-        } else {
-          if (now - lastRawEmitRef.current >= RAW_EMIT_INTERVAL_MS) {
-            lastRawEmitRef.current = now;
-            setRawCents(null);
-          }
+      if (buf.length < BUFFER_SIZE) return;
+
+      // Throttle: run autocorrelation at most once per MIN_PROCESS_MS
+      const now = performance.now();
+      if (now - lastProcessRef.current < MIN_PROCESS_MS) return;
+      lastProcessRef.current = now;
+
+      // Take one window, discard the rest
+      const window = new Float32Array(buf.splice(0, BUFFER_SIZE));
+      sampleBufRef.current = [];
+
+      const freq = autoCorrelate(window, SAMPLE_RATE);
+
+      if (freq > 60 && freq < 1400) {
+        freqBufferRef.current.push(freq);
+        if (now - lastRawEmitRef.current >= RAW_EMIT_INTERVAL_MS) {
+          lastRawEmitRef.current = now;
+          setRawCents(freqToNoteInfo(freq).cents);
         }
+      } else {
+        if (now - lastRawEmitRef.current >= RAW_EMIT_INTERVAL_MS) {
+          lastRawEmitRef.current = now;
+          setRawCents(null);
+        }
+      }
 
-        if (now - lastEmitRef.current >= EMIT_INTERVAL_MS) {
-          lastEmitRef.current = now;
-          const samples = freqBufferRef.current.splice(0);
-          if (samples.length > 0) {
-            const sorted = [...samples].sort((a, b) => a - b);
-            const median = sorted[Math.floor(sorted.length / 2)];
-            const info = freqToNoteInfo(median);
-            setPitch({
-              frequency: Math.round(median * 10) / 10,
-              note: info.note,
-              octave: info.octave,
-              cents: info.cents,
-              isActive: true,
-            });
-          } else {
-            setPitch((prev) => (prev ? { ...prev, isActive: false } : null));
-          }
+      if (now - lastEmitRef.current >= EMIT_INTERVAL_MS) {
+        lastEmitRef.current = now;
+        const samples = freqBufferRef.current.splice(0);
+        if (samples.length > 0) {
+          const sorted = [...samples].sort((a, b) => a - b);
+          const median = sorted[Math.floor(sorted.length / 2)];
+          const info = freqToNoteInfo(median);
+          setPitch({
+            frequency: Math.round(median * 10) / 10,
+            note: info.note,
+            octave: info.octave,
+            cents: info.cents,
+            isActive: true,
+          });
+        } else {
+          setPitch((prev) => (prev ? { ...prev, isActive: false } : null));
         }
       }
     });
 
     AudioRecord.start();
+  }, []);
+
+  // pause/resume: silence processing without stopping AudioRecord, avoiding iOS audio session clicks
+  const pause = useCallback(() => {
+    runningRef.current = false;
+    setPitch(null);
+    setRawCents(null);
+    sampleBufRef.current = [];
+    freqBufferRef.current = [];
+  }, []);
+
+  const resume = useCallback(() => {
+    runningRef.current = true;
+    lastEmitRef.current = performance.now();
+    lastRawEmitRef.current = performance.now();
+    lastProcessRef.current = 0;
   }, []);
 
   const stop = useCallback(async () => {
@@ -191,5 +218,5 @@ export function usePitchDetection() {
 
   useEffect(() => () => { stop(); }, [stop]);
 
-  return { pitch, rawCents, isListening, error, start, stop };
+  return { pitch, rawCents, isListening, error, start, stop, pause, resume };
 }

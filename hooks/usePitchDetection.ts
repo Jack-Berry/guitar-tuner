@@ -226,5 +226,9 @@ export function usePitchDetection() {
 
   useEffect(() => () => stop(), [stop]);
 
-  return { pitch, rawCents, isListening, error, start, stop };
+  // Web: no audio session to manage, pause/resume are no-ops
+  const pause = useCallback(() => {}, []);
+  const resume = useCallback(() => {}, []);
+
+  return { pitch, rawCents, isListening, error, start, stop, pause, resume };
 }

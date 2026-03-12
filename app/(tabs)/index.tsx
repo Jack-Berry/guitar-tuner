@@ -1,6 +1,8 @@
 import { TunerCharacter } from "@/components/TunerCharacter";
+import { IconSymbol } from "@/components/ui/icon-symbol";
 import { usePitchDetection } from "@/hooks/usePitchDetection";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useReferenceTone } from "@/hooks/useReferenceTone";
+import { useEffect, useRef, useState } from "react";
 import {
   Modal,
   Platform,
@@ -76,86 +78,6 @@ const TUNINGS: TuningPreset[] = [
 
 // Max semitone shift allowed by the ± buttons
 const MAX_OFFSET = 6;
-
-// ─── Reference tone ──────────────────────────────────────────────────────────
-
-function useReferenceTone() {
-  const ctxRef = useRef<AudioContext | null>(null);
-  const oscRef = useRef<OscillatorNode | null>(null);
-  const gainRef = useRef<GainNode | null>(null);
-  const [playingFreq, setPlayingFreq] = useState<number | null>(null);
-  // Ref so callbacks never close over stale state
-  const playingFreqRef = useRef<number | null>(null);
-
-  const stopTone = useCallback(() => {
-    if (!ctxRef.current || !gainRef.current || !oscRef.current) return;
-    const ctx = ctxRef.current;
-    const gain = gainRef.current;
-    const osc = oscRef.current;
-    gain.gain.cancelScheduledValues(ctx.currentTime);
-    gain.gain.setTargetAtTime(0, ctx.currentTime, 0.08);
-    setTimeout(() => {
-      try {
-        osc.stop();
-        osc.disconnect();
-      } catch {}
-    }, 400);
-    oscRef.current = null;
-    gainRef.current = null;
-    playingFreqRef.current = null;
-    setPlayingFreq(null);
-  }, []);
-
-  const playTone = useCallback((freq: number) => {
-    if (Platform.OS !== "web") return;
-    // Fade out any current tone quickly before starting the new one
-    if (oscRef.current && gainRef.current && ctxRef.current) {
-      const gain = gainRef.current;
-      const osc = oscRef.current;
-      gain.gain.cancelScheduledValues(ctxRef.current.currentTime);
-      gain.gain.setTargetAtTime(0, ctxRef.current.currentTime, 0.03);
-      setTimeout(() => {
-        try {
-          osc.stop();
-          osc.disconnect();
-        } catch {}
-      }, 150);
-      oscRef.current = null;
-      gainRef.current = null;
-    }
-    if (!ctxRef.current) ctxRef.current = new AudioContext();
-    const ctx = ctxRef.current;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = "sine";
-    osc.frequency.value = freq;
-    gain.gain.setValueAtTime(0, ctx.currentTime);
-    gain.gain.linearRampToValueAtTime(0.25, ctx.currentTime + 0.04);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start();
-    oscRef.current = osc;
-    gainRef.current = gain;
-    playingFreqRef.current = freq;
-    setPlayingFreq(freq);
-  }, []);
-
-  // Toggle: same freq → stop; different freq → switch
-  const toggleTone = useCallback(
-    (freq: number) => {
-      if (playingFreqRef.current === freq) {
-        stopTone();
-      } else {
-        playTone(freq);
-      }
-    },
-    [playTone, stopTone],
-  );
-
-  useEffect(() => () => stopTone(), [stopTone]);
-
-  return { playingFreq, toggleTone, playTone, stopTone };
-}
 
 // ─── Tuning selector ─────────────────────────────────────────────────────────
 
@@ -299,7 +221,8 @@ function ConfirmedBanner({ nextString }: { nextString?: StringInfo }) {
         <Text style={styles.confirmedNext}>
           Next:{" "}
           <Text style={styles.confirmedNextHighlight}>
-            {nextString.note}{nextString.octave}
+            {nextString.note}
+            {nextString.octave}
           </Text>
         </Text>
       ) : (
@@ -520,7 +443,8 @@ type ConfirmedInfo = {
 };
 
 export default function TunerScreen() {
-  const { pitch, rawCents, error, start, stop } = usePitchDetection();
+  const { pitch, rawCents, error, start, stop, pause, resume } =
+    usePitchDetection();
   const { playingFreq, playTone, stopTone } = useReferenceTone();
   const [confirmed, setConfirmed] = useState<ConfirmedInfo | null>(null);
   const [tuningIdx, setTuningIdx] = useState(0);
@@ -528,10 +452,16 @@ export default function TunerScreen() {
   const [showCharacter, setShowCharacter] = useState(true);
   const [showMeter, setShowMeter] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [charSectionHeight, setCharSectionHeight] = useState(0);
   const { width: winW, height: winH } = useWindowDimensions();
-  // Character fills ~55% of screen height, maintaining 1:2 aspect ratio
-  const charHeight = Math.round(winH * 0.55);
-  const charWidth = Math.round(charHeight / 2);
+  // On web winH is the usable content height; on native it includes status bar/home indicator
+  const METER_BONUS = Platform.OS !== "web" && !showMeter ? 100 : 0; // meterSlot 80 + gap 20
+  // On web: size character to fill the measured section minus the text rows below it.
+  // On native: fixed % of window height.
+  const charHeight = Platform.OS === "web"
+    ? Math.max(80, charSectionHeight - 70) // 70px reserved for frequency + cents text + gaps
+    : Math.round(winH * 0.38) + METER_BONUS;
+  const charWidth = Math.round((charHeight * 110) / 173);
   // Note sign fills available width (screen minus horizontal padding)
   const signWidth = winW - 48;
 
@@ -548,16 +478,23 @@ export default function TunerScreen() {
   const activeStringsRef = useRef(activeStrings);
   activeStringsRef.current = activeStrings;
 
-  // Pause tuner while reference tone is playing (mic would pick up the speaker output)
+  // Start mic once on mount and keep it running — stopping/starting causes iOS audio session
+  // transitions that produce an audible click.
+  useEffect(() => {
+    start();
+    return () => stop();
+  }, []);
+
+  // When reference tone plays, pause processing (not recording) to avoid feedback.
+  // resume() re-enables processing without touching the audio session → no click.
   useEffect(() => {
     if (playingFreq !== null) {
-      stop();
+      pause();
     } else {
-      start();
+      resume();
       setConfirmed(null);
       inTuneCountRef.current = 0;
     }
-    return () => stop();
   }, [playingFreq]);
 
   // Reset state when tuning changes
@@ -658,7 +595,9 @@ export default function TunerScreen() {
   const playingNote =
     playingFreq !== null && playingIdxRef.current !== null
       ? activeStrings[playingIdxRef.current].note
-      : hasPitch ? pitch!.note : "";
+      : hasPitch
+        ? pitch!.note
+        : "";
   const centsAbs = hasPitch ? Math.abs(pitch!.cents) : 100;
   const inTune = centsAbs <= IN_TUNE_CENTS;
 
@@ -689,8 +628,11 @@ export default function TunerScreen() {
       <View style={styles.headerRow}>
         <View style={styles.headerSpacer} />
         <Text style={styles.header}>Guitar Tuner</Text>
-        <TouchableOpacity style={styles.settingsBtn} onPress={() => setSettingsOpen(true)}>
-          <Text style={styles.settingsIcon}>⚙</Text>
+        <TouchableOpacity
+          style={styles.settingsBtn}
+          onPress={() => setSettingsOpen(true)}
+        >
+          <IconSymbol name="gearshape" size={30} color="#666" />
         </TouchableOpacity>
       </View>
 
@@ -708,7 +650,12 @@ export default function TunerScreen() {
         >
           <View style={styles.settingsPanel}>
             <Text style={styles.settingsPanelHeader}>Settings</Text>
-            <View style={[styles.settingsRow, !showMeter && styles.settingsRowDisabled]}>
+            <View
+              style={[
+                styles.settingsRow,
+                !showMeter && styles.settingsRowDisabled,
+              ]}
+            >
               <Text style={styles.settingsLabel}>Show character</Text>
               <Switch
                 value={showCharacter}
@@ -718,7 +665,12 @@ export default function TunerScreen() {
                 thumbColor={showCharacter ? "#4cda7a" : "#666"}
               />
             </View>
-            <View style={[styles.settingsRow, !showCharacter && styles.settingsRowDisabled]}>
+            <View
+              style={[
+                styles.settingsRow,
+                !showCharacter && styles.settingsRowDisabled,
+              ]}
+            >
               <Text style={styles.settingsLabel}>Show meter</Text>
               <Switch
                 value={showMeter}
@@ -733,7 +685,7 @@ export default function TunerScreen() {
       </Modal>
 
       {/* Tuner character (or static note sign) + frequency/cents below */}
-      <View style={styles.characterSection}>
+      <View style={styles.characterSection} onLayout={(e) => setCharSectionHeight(e.nativeEvent.layout.height)}>
         {showCharacter ? (
           <TunerCharacter
             cents={rawCents !== null ? rawCents : 0}
@@ -745,7 +697,12 @@ export default function TunerScreen() {
             height={charHeight}
           />
         ) : (
-          <View style={[styles.noteSign, { borderColor: noteColor, width: signWidth }]}>
+          <View
+            style={[
+              styles.noteSign,
+              { borderColor: noteColor, width: signWidth },
+            ]}
+          >
             <Text style={[styles.noteSignText, { color: noteColor }]}>
               {hasPitch ? pitch!.note : "—"}
             </Text>
@@ -824,13 +781,6 @@ export default function TunerScreen() {
       </View>
 
       {error && <Text style={styles.error}>{error}</Text>}
-
-      {Platform.OS !== "web" && (
-        <Text style={styles.platformNote}>
-          Pitch detection works in the browser (web) target.{"\n"}Run with{" "}
-          <Text style={styles.code}>expo start --web</Text>
-        </Text>
-      )}
     </SafeAreaView>
   );
 }
@@ -868,10 +818,6 @@ const styles = StyleSheet.create({
     height: 36,
     alignItems: "center",
     justifyContent: "center",
-  },
-  settingsIcon: {
-    fontSize: 20,
-    color: "#666",
   },
   settingsPanel: {
     backgroundColor: "#1a1a1a",
@@ -926,6 +872,7 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
     gap: 8,
     paddingBottom: 8,
+    zIndex: 1,
   },
   bottomSection: {
     alignItems: "center",
@@ -1214,14 +1161,5 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: "center",
     paddingHorizontal: 20,
-  },
-  platformNote: {
-    color: "#555",
-    fontSize: 12,
-    textAlign: "center",
-  },
-  code: {
-    color: "#888",
-    fontFamily: Platform.OS === "ios" ? "Courier" : "monospace",
   },
 });

@@ -11,8 +11,10 @@
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
-        "NSMicrophoneUsageDescription": "Guitar Tuner needs the microphone to detect the pitch of your guitar strings."
-      }
+        "NSMicrophoneUsageDescription": "Guitar Tuner needs the microphone to detect the pitch of your guitar strings.",
+        "ITSAppUsesNonExemptEncryption": false
+      },
+      "bundleIdentifier": "com.etherplay.guitartuner"
     },
     "android": {
       "permissions": [
@@ -44,7 +46,8 @@
             "backgroundColor": "#000000"
           }
         }
-      ]
+      ],
+      "expo-audio"
     ],
     "experiments": {
       "typedRoutes": true,

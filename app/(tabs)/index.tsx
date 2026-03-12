@@ -104,12 +104,6 @@ function TuningSelector({
 
   return (
     <View style={styles.selectorWrapper}>
-      {offset !== 0 && (
-        <TouchableOpacity style={styles.recentreBtn} onPress={onRecentre}>
-          <Text style={styles.recentreBtnText}>↺ Reset tuning</Text>
-        </TouchableOpacity>
-      )}
-
       <View style={styles.selectorRow}>
         <TouchableOpacity
           style={[
@@ -145,6 +139,14 @@ function TuningSelector({
         >
           <Text style={styles.stepBtnText}>+</Text>
         </TouchableOpacity>
+      </View>
+
+      <View style={styles.recentreBtnSlot}>
+        {offset !== 0 && (
+          <TouchableOpacity style={styles.recentreBtn} onPress={onRecentre}>
+            <Text style={styles.recentreBtnText}>↺ Reset tuning</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       <Modal
@@ -909,6 +911,11 @@ const styles = StyleSheet.create({
   },
   stepBtnDisabled: {
     opacity: 0.3,
+  },
+  recentreBtnSlot: {
+    height: 28,
+    justifyContent: "center",
+    alignItems: "center",
   },
   recentreBtn: {
     paddingHorizontal: 14,
